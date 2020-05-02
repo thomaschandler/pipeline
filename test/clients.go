@@ -46,6 +46,8 @@ import (
 	"github.com/tektoncd/pipeline/pkg/client/clientset/versioned/typed/pipeline/v1beta1"
 	resourceversioned "github.com/tektoncd/pipeline/pkg/client/resource/clientset/versioned"
 	resourcev1alpha1 "github.com/tektoncd/pipeline/pkg/client/resource/clientset/versioned/typed/resource/v1alpha1"
+	rbacv1 "k8s.io/client-go/kubernetes/typed/rbac/v1"
+	"k8s.io/client-go/tools/clientcmd"
 	knativetest "knative.dev/pkg/test"
 )
 
@@ -53,7 +55,10 @@ import (
 type clients struct {
 	KubeClient *knativetest.KubeClient
 
+	RbacV1Client *rbacv1.RbacV1Client
+
 	PipelineClient         v1beta1.PipelineInterface
+	ClusterTaskClient      v1beta1.ClusterTaskInterface
 	TaskClient             v1beta1.TaskInterface
 	TaskRunClient          v1beta1.TaskRunInterface
 	PipelineRunClient      v1beta1.PipelineRunInterface
@@ -61,10 +66,11 @@ type clients struct {
 	ConditionClient        v1alpha1.ConditionInterface
 }
 
-// newClients instantiates and returns several clientsets required for making requests to the
-// Pipeline cluster specified by the combination of clusterName and configPath. Clients can
-// make requests within namespace.
-func newClients(t *testing.T, configPath, clusterName, namespace string) *clients {
+// newClientsWithOverrides instantiates and returns several clientsets required
+// for making requests to the Pipeline cluster specified by the combination of
+// clusterName and configPath. Clients can make requests within namespace.
+// Supplied configuration overrides are applied to all clientsets
+func newClientsWithOverrides(t *testing.T, configPath, clusterName, namespace string, overrides *clientcmd.ConfigOverrides) *clients {
 	t.Helper()
 	var err error
 	c := &clients{}
@@ -74,9 +80,20 @@ func newClients(t *testing.T, configPath, clusterName, namespace string) *client
 		t.Fatalf("failed to create kubeclient from config file at %s: %s", configPath, err)
 	}
 
-	cfg, err := knativetest.BuildClientConfig(configPath, clusterName)
+	// Override the cluster name if provided.
+	if clusterName != "" {
+		overrides.Context.Cluster = clusterName
+	}
+	cfg, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
+		&clientcmd.ClientConfigLoadingRules{ExplicitPath: configPath},
+		overrides).ClientConfig()
 	if err != nil {
 		t.Fatalf("failed to create configuration obj from %s for cluster %s: %s", configPath, clusterName, err)
+	}
+
+	c.RbacV1Client, err = rbacv1.NewForConfig(cfg)
+	if err != nil {
+		t.Fatalf("failed to create rbac client from config file at %s: %s", configPath, err)
 	}
 
 	cs, err := versioned.NewForConfig(cfg)
@@ -88,10 +105,18 @@ func newClients(t *testing.T, configPath, clusterName, namespace string) *client
 		t.Fatalf("failed to create pipeline clientset from config file at %s: %s", configPath, err)
 	}
 	c.PipelineClient = cs.TektonV1beta1().Pipelines(namespace)
+	c.ClusterTaskClient = cs.TektonV1beta1().ClusterTasks()
 	c.TaskClient = cs.TektonV1beta1().Tasks(namespace)
 	c.TaskRunClient = cs.TektonV1beta1().TaskRuns(namespace)
 	c.PipelineRunClient = cs.TektonV1beta1().PipelineRuns(namespace)
 	c.PipelineResourceClient = rcs.TektonV1alpha1().PipelineResources(namespace)
 	c.ConditionClient = cs.TektonV1alpha1().Conditions(namespace)
 	return c
+}
+
+// newClients instantiates and returns several clientsets required for making requests to the
+// Pipeline cluster specified by the combination of clusterName and configPath. Clients can
+// make requests within namespace.
+func newClients(t *testing.T, configPath, clusterName, namespace string) *clients {
+	return newClientsWithOverrides(t, configPath, clusterName, namespace, &clientcmd.ConfigOverrides{})
 }

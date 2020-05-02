@@ -1,4 +1,4 @@
-// +build e2e
+// +build e2e examples
 
 /*
 Copyright 2019 The Tekton Authors
@@ -41,6 +41,7 @@ import (
 	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
 	// Mysteriously by k8s libs, or they fail to create `KubeClient`s when using oidc authentication. Apparently just importing it is enough. @_@ side effects @_@. https://github.com/kubernetes/client-go/issues/345
 	_ "k8s.io/client-go/plugin/pkg/client/auth/oidc"
+	"k8s.io/client-go/tools/clientcmd"
 )
 
 var initMetrics sync.Once
@@ -50,13 +51,13 @@ func init() {
 	flag.BoolVar(&skipRootUserTests, "skipRootUserTests", false, "Skip tests that require root user")
 }
 
-func setup(t *testing.T, fn ...func(*testing.T, *clients, string)) (*clients, string) {
+func setupWithOverrides(t *testing.T, overrides *clientcmd.ConfigOverrides, fn ...func(*testing.T, *clients, string)) (*clients, string) {
 	t.Helper()
 	namespace := names.SimpleNameGenerator.RestrictLengthWithRandomSuffix("arendelle")
 
 	initializeLogsAndMetrics(t)
 
-	c := newClients(t, knativetest.Flags.Kubeconfig, knativetest.Flags.Cluster, namespace)
+	c := newClientsWithOverrides(t, knativetest.Flags.Kubeconfig, knativetest.Flags.Cluster, namespace, overrides)
 	createNamespace(t, namespace, c.KubeClient)
 	verifyServiceAccountExistence(t, namespace, c.KubeClient)
 
@@ -65,6 +66,10 @@ func setup(t *testing.T, fn ...func(*testing.T, *clients, string)) (*clients, st
 	}
 
 	return c, namespace
+}
+
+func setup(t *testing.T, fn ...func(*testing.T, *clients, string)) (*clients, string) {
+	return setupWithOverrides(t, &clientcmd.ConfigOverrides{}, fn...)
 }
 
 func header(logf logging.FormatLogger, text string) {
